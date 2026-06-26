@@ -130,7 +130,7 @@ async function fetchGql(
   return json.data;
 }
 
-const GET_ADMINED_TOURNAMENTS_QUERY = `
+const ADMINED_TOURNAMENTS_QUERY = `
   query TournamentsQuery {
     currentUser {
       tournaments(query: {perPage: 50, filter: {tournamentView: "admin"}}) {
@@ -143,7 +143,7 @@ const GET_ADMINED_TOURNAMENTS_QUERY = `
   }
 `;
 
-const GET_TOURNAMENT_QUERY = `
+const TOURNAMENT_QUERY = `
   query TournamentQuery($slug: String) {
     tournament(slug: $slug) {
       events {
@@ -154,7 +154,7 @@ const GET_TOURNAMENT_QUERY = `
   }
 `;
 
-const GET_EVENT_QUERY = `
+const EVENT_QUERY = `
   query EventQuery($id: ID) {
     event(id: $id) {
       phases {
@@ -172,7 +172,7 @@ const GET_EVENT_QUERY = `
   }
 `;
 
-const GET_POOLS_SEEDS_QUERY = `
+const POOLS_SEEDS_QUERY = `
   query poolsSeeds($id: ID) {
     phase(id: $id) {
       seeds(query: { page: 1, perPage: 512 }) {
@@ -188,7 +188,7 @@ const GET_POOLS_SEEDS_QUERY = `
   }
 `;
 
-const GET_SILVER_SEEDS_QUERY = `
+const SILVER_SEEDS_QUERY = `
   query silverSeeds($id: ID) {
     phase(id: $id) {
       seeds(query: { page: 1, perPage: 512 }) {
@@ -202,6 +202,18 @@ const GET_SILVER_SEEDS_QUERY = `
           }
         }
       }
+    }
+  }
+`;
+
+const SILVER_SEEDS_MUTATION = `
+  mutation silverSeeds($phaseId: ID!, $seedMapping: [UpdatePhaseSeedInfo]!) {
+    updatePhaseSeeding(
+      phaseId: $phaseId
+      seedMapping: $seedMapping
+      options: { strictMode: true }
+    ) {
+      id
     }
   }
 `;
@@ -328,11 +340,7 @@ function App() {
     (async () => {
       try {
         if (sggApiKey) {
-          const data = await fetchGql(
-            sggApiKey,
-            GET_ADMINED_TOURNAMENTS_QUERY,
-            {}
-          );
+          const data = await fetchGql(sggApiKey, ADMINED_TOURNAMENTS_QUERY, {});
           setError("");
           setTournaments(data.currentUser.tournaments.nodes ?? []);
         }
@@ -352,7 +360,7 @@ function App() {
     async (newSlug: string) => {
       try {
         setGetting(true);
-        const data = await fetchGql(sggApiKey, GET_TOURNAMENT_QUERY, {
+        const data = await fetchGql(sggApiKey, TOURNAMENT_QUERY, {
           slug: newSlug,
         });
         setError("");
@@ -376,7 +384,7 @@ function App() {
     async (newEventId: number) => {
       try {
         setGetting(true);
-        const data = await fetchGql(sggApiKey, GET_EVENT_QUERY, {
+        const data = await fetchGql(sggApiKey, EVENT_QUERY, {
           id: newEventId,
         });
         setError("");
@@ -422,7 +430,7 @@ function App() {
   > => {
     try {
       setGetting(true);
-      const data = await fetchGql(sggApiKey, GET_POOLS_SEEDS_QUERY, {
+      const data = await fetchGql(sggApiKey, POOLS_SEEDS_QUERY, {
         id: poolsPhaseId,
       });
       setError("");
@@ -451,7 +459,7 @@ function App() {
     ): Promise<SilverSeed[]> => {
       try {
         setGetting(true);
-        const data = await fetchGql(sggApiKey, GET_SILVER_SEEDS_QUERY, {
+        const data = await fetchGql(sggApiKey, SILVER_SEEDS_QUERY, {
           id: silverPhaseId,
         });
         setError("");
@@ -468,6 +476,32 @@ function App() {
     },
     [sggApiKey, silverPhaseId]
   );
+
+  const getProposedSeeding = useCallback(async () => {
+    const poolIdToPoolSeedToOverallSeed = await getPoolsSeeds();
+    const silverSeeds = (
+      await getSilverSeeds(poolIdToPoolSeedToOverallSeed)
+    ).sort((a, b) => a.overallSeed - b.overallSeed);
+    const numPools = poolIdToPoolSeedToOverallSeed.size;
+
+    let rotate = 0;
+    const proposedSilverSeeds: SilverSeed[] = [];
+    while (silverSeeds.length > 0) {
+      let nextSeeds = silverSeeds.slice(0, numPools);
+      if (rotate > 0) {
+        const end = nextSeeds.splice(-rotate);
+        nextSeeds = end.concat(nextSeeds);
+      }
+      proposedSilverSeeds.push(...nextSeeds);
+
+      silverSeeds.splice(0, numPools);
+      rotate += 2;
+      if (rotate >= numPools) {
+        rotate = rotate % numPools;
+      }
+    }
+    return { proposedSilverSeeds, numPools };
+  }, [getPoolsSeeds, getSilverSeeds]);
 
   return (
     <Stack style={{ alignItems: "start" }}>
@@ -712,67 +746,84 @@ function App() {
                           </ListItemButton>
                           <Stack
                             direction="row"
+                            spacing="8px"
                             style={{ alignItems: "center", height: "48px" }}
                           >
                             <Button
                               color="warning"
                               variant="outlined"
+                              disabled={getting}
                               onClick={async () => {
-                                const poolIdToPoolSeedToOverallSeed =
-                                  await getPoolsSeeds();
-                                const silverSeeds = (
-                                  await getSilverSeeds(
-                                    poolIdToPoolSeedToOverallSeed
-                                  )
-                                ).sort((a, b) => a.overallSeed - b.overallSeed);
-                                const numPools =
-                                  poolIdToPoolSeedToOverallSeed.size;
-
-                                let rotate = 0;
-                                const proposedSilverSeeds: SilverSeed[] = [];
-                                while (silverSeeds.length > 0) {
-                                  let nextSeeds = silverSeeds.slice(
-                                    0,
-                                    numPools
-                                  );
-                                  if (rotate > 0) {
-                                    const end = nextSeeds.splice(-rotate);
-                                    nextSeeds = end.concat(nextSeeds);
+                                try {
+                                  setGetting(true);
+                                  const { proposedSilverSeeds, numPools } =
+                                    await getProposedSeeding();
+                                  setError("");
+                                  console.log("proposed seeding:");
+                                  for (
+                                    let i = 0;
+                                    i < proposedSilverSeeds.length;
+                                    i += numPools
+                                  ) {
+                                    console.log(
+                                      JSON.stringify(
+                                        proposedSilverSeeds
+                                          .slice(i, i + numPools)
+                                          .map(
+                                            (silverSeed) =>
+                                              silverSeed.overallSeed
+                                          )
+                                      )
+                                    );
                                   }
-                                  proposedSilverSeeds.push(...nextSeeds);
-
-                                  silverSeeds.splice(0, numPools);
-                                  rotate += 2;
-                                  if (rotate >= numPools) {
-                                    rotate = rotate % numPools;
-                                  }
-                                }
-
-                                console.log("proposed seeding:");
-                                for (
-                                  let i = 0;
-                                  i < proposedSilverSeeds.length;
-                                  i += numPools
-                                ) {
-                                  console.log(
-                                    JSON.stringify(
-                                      proposedSilverSeeds
-                                        .slice(i, i + numPools)
-                                        .map(
-                                          (silverSeed) => silverSeed.overallSeed
-                                        )
-                                    )
+                                  console.log("\n");
+                                  checkForRematches(
+                                    proposedSilverSeeds,
+                                    numPools,
+                                    4
                                   );
+                                } catch (e: unknown) {
+                                  if (e instanceof Error) {
+                                    setError(e.message);
+                                  }
+                                } finally {
+                                  setGetting(false);
                                 }
-                                console.log("\n");
-                                checkForRematches(
-                                  proposedSilverSeeds,
-                                  numPools,
-                                  4
-                                );
                               }}
                             >
                               Check (See console)
+                            </Button>
+                            <Button
+                              variant="contained"
+                              disabled={getting}
+                              onClick={async () => {
+                                try {
+                                  setGetting(true);
+                                  const { proposedSilverSeeds } =
+                                    await getProposedSeeding();
+                                  setError("");
+                                  const seedMapping = proposedSilverSeeds.map(
+                                    (silverSeed, i) => ({
+                                      seedId: silverSeed.id,
+                                      seedNum: i + 1,
+                                    })
+                                  );
+                                  await fetchGql(
+                                    sggApiKey,
+                                    SILVER_SEEDS_MUTATION,
+                                    { phaseId: silverPhaseId, seedMapping }
+                                  );
+                                  setError("");
+                                } catch (e: unknown) {
+                                  if (e instanceof Error) {
+                                    setError(e.message);
+                                  }
+                                } finally {
+                                  setGetting(false);
+                                }
+                              }}
+                            >
+                              Fix!
                             </Button>
                           </Stack>
                         </>
