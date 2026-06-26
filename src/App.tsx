@@ -13,11 +13,13 @@ import {
   Link,
   List,
   ListItemButton,
+  ListItemIcon,
   ListItemText,
   Stack,
   TextField,
   Typography,
 } from "@mui/material";
+import { ArrowBack } from "@mui/icons-material";
 
 class ApiError extends Error {
   public fetch: boolean;
@@ -468,7 +470,7 @@ function App() {
   );
 
   return (
-    <Stack>
+    <Stack style={{ alignItems: "start" }}>
       {!sggApiKey && (
         <Typography variant="caption" style={{ marginBottom: "8px" }}>
           Get your start.gg API key by clicking “Create new token” in the
@@ -490,6 +492,11 @@ function App() {
         type="password"
         variant="outlined"
         value={sggApiKey}
+        slotProps={{
+          htmlInput: {
+            size: 32,
+          },
+        }}
         onChange={(ev) => {
           setSggApiKey(ev.target.value);
         }}
@@ -535,151 +542,245 @@ function App() {
                   Get!
                 </Button>
               </form>
-              {tournaments.length > 0 && (
-                <List disablePadding>
-                  {tournaments.map((tournament) => (
-                    <ListItemButton
-                      key={tournament.slug}
-                      disabled={getting}
-                      onClick={async () => {
-                        await getTournament(tournament.slug);
-                      }}
+              {tournaments.length > 0 &&
+                tournaments.map((tournament) => (
+                  <ListItemButton
+                    key={tournament.slug}
+                    disabled={getting}
+                    onClick={async () => {
+                      await getTournament(tournament.slug);
+                    }}
+                  >
+                    <ListItemText
+                      style={{ overflowX: "hidden", whiteSpace: "nowrap" }}
                     >
-                      <ListItemText
-                        style={{ overflowX: "hidden", whiteSpace: "nowrap" }}
-                      >
-                        {tournament.name}{" "}
-                        <Typography variant="caption">
-                          ({tournament.slug})
-                        </Typography>
-                      </ListItemText>
-                    </ListItemButton>
-                  ))}
-                </List>
-              )}
+                      {tournament.name}{" "}
+                      <Typography variant="caption">
+                        ({tournament.slug})
+                      </Typography>
+                    </ListItemText>
+                  </ListItemButton>
+                ))}
             </>
           )}
-          {slug && !eventId && (
+          {slug && (
             <>
-              {events.length > 0 && (
-                <List disablePadding>
-                  {events.map((event) => (
-                    <ListItemButton
-                      key={event.id}
-                      disableGutters
-                      disabled={getting}
-                      onClick={async () => {
-                        await getEvent(event.id);
-                      }}
-                    >
-                      <ListItemText
-                        style={{ overflowX: "hidden", whiteSpace: "nowrap" }}
-                      >
-                        {event.name}{" "}
-                        <Typography variant="caption">({event.id})</Typography>
-                      </ListItemText>
-                    </ListItemButton>
-                  ))}
-                </List>
-              )}
-            </>
-          )}
-          {slug && eventId > 0 && !poolsPhaseId && (
-            <>
-              {rrPoolsPhases.length > 0 && (
-                <List disablePadding>
-                  {rrPoolsPhases.map((phase) => (
-                    <ListItemButton
-                      key={phase.id}
-                      disableGutters
-                      onClick={() => {
-                        setPoolsPhaseId(phase.id);
-                      }}
-                    >
-                      <ListItemText
-                        style={{ overflowX: "hidden", whiteSpace: "nowrap" }}
-                      >
-                        {phase.name}{" "}
-                        <Typography variant="caption">({phase.id})</Typography>
-                      </ListItemText>
-                    </ListItemButton>
-                  ))}
-                </List>
-              )}
-            </>
-          )}
-          {slug && eventId > 0 && poolsPhaseId > 0 && !silverPhaseId && (
-            <>
-              {sePhases.length > 0 && (
-                <List disablePadding>
-                  {sePhases.map((phase) => (
-                    <ListItemButton
-                      key={phase.id}
-                      disableGutters
-                      onClick={() => {
-                        setSilverPhaseId(phase.id);
-                      }}
-                    >
-                      <ListItemText
-                        style={{ overflowX: "hidden", whiteSpace: "nowrap" }}
-                      >
-                        {phase.name}{" "}
-                        <Typography variant="caption">({phase.id})</Typography>
-                      </ListItemText>
-                    </ListItemButton>
-                  ))}
-                </List>
-              )}
-            </>
-          )}
-          {slug && eventId > 0 && poolsPhaseId > 0 && silverPhaseId > 0 && (
-            <>
-              <Button
-                variant="contained"
-                onClick={async () => {
-                  const poolIdToPoolSeedToOverallSeed = await getPoolsSeeds();
-                  const silverSeeds = (
-                    await getSilverSeeds(poolIdToPoolSeedToOverallSeed)
-                  ).sort((a, b) => a.overallSeed - b.overallSeed);
-                  const numPools = poolIdToPoolSeedToOverallSeed.size;
-
-                  let rotate = 0;
-                  const proposedSilverSeeds: SilverSeed[] = [];
-                  while (silverSeeds.length > 0) {
-                    let nextSeeds = silverSeeds.slice(0, numPools);
-                    if (rotate > 0) {
-                      const end = nextSeeds.splice(-rotate);
-                      nextSeeds = end.concat(nextSeeds);
-                    }
-                    proposedSilverSeeds.push(...nextSeeds);
-
-                    silverSeeds.splice(0, numPools);
-                    rotate += 2;
-                    if (rotate >= numPools) {
-                      rotate = rotate % numPools;
-                    }
-                  }
-
-                  console.log("proposed seeding:");
-                  for (
-                    let i = 0;
-                    i < proposedSilverSeeds.length;
-                    i += numPools
-                  ) {
-                    console.log(
-                      JSON.stringify(
-                        proposedSilverSeeds
-                          .slice(i, i + numPools)
-                          .map((silverSeed) => silverSeed.overallSeed)
-                      )
-                    );
-                  }
-                  console.log("\n");
-                  checkForRematches(proposedSilverSeeds, numPools, 4);
+              <ListItemButton
+                style={{ paddingLeft: 0 }}
+                onClick={() => {
+                  setSlug("");
+                  setEventId(0);
+                  setPoolsPhaseId(0);
+                  setSilverPhaseId(0);
                 }}
               >
-                Go!
-              </Button>
+                <ListItemIcon>
+                  <ArrowBack />
+                </ListItemIcon>
+                <ListItemText>{slug}</ListItemText>
+              </ListItemButton>
+              {!eventId && (
+                <>
+                  {events.length > 0 && (
+                    <List disablePadding>
+                      {events.map((event) => (
+                        <ListItemButton
+                          key={event.id}
+                          disabled={getting}
+                          onClick={async () => {
+                            await getEvent(event.id);
+                          }}
+                        >
+                          <ListItemText
+                            style={{
+                              overflowX: "hidden",
+                              whiteSpace: "nowrap",
+                            }}
+                          >
+                            {event.name}{" "}
+                            <Typography variant="caption">
+                              ({event.id})
+                            </Typography>
+                          </ListItemText>
+                        </ListItemButton>
+                      ))}
+                    </List>
+                  )}
+                </>
+              )}
+              {eventId > 0 && (
+                <>
+                  <ListItemButton
+                    style={{ paddingLeft: 0 }}
+                    onClick={() => {
+                      setEventId(0);
+                      setPoolsPhaseId(0);
+                      setSilverPhaseId(0);
+                    }}
+                  >
+                    <ListItemIcon>
+                      <ArrowBack />
+                    </ListItemIcon>
+                    <ListItemText>Event ID: {eventId}</ListItemText>
+                  </ListItemButton>
+                  {!poolsPhaseId && (
+                    <>
+                      {rrPoolsPhases.length > 0 && (
+                        <List disablePadding>
+                          {rrPoolsPhases.map((phase) => (
+                            <ListItemButton
+                              key={phase.id}
+                              onClick={() => {
+                                setPoolsPhaseId(phase.id);
+                              }}
+                            >
+                              <ListItemText
+                                style={{
+                                  overflowX: "hidden",
+                                  whiteSpace: "nowrap",
+                                }}
+                              >
+                                {phase.name}{" "}
+                                <Typography variant="caption">
+                                  ({phase.id})
+                                </Typography>
+                              </ListItemText>
+                            </ListItemButton>
+                          ))}
+                        </List>
+                      )}
+                    </>
+                  )}
+                  {poolsPhaseId > 0 && (
+                    <>
+                      <ListItemButton
+                        style={{ paddingLeft: 0 }}
+                        onClick={() => {
+                          setPoolsPhaseId(0);
+                          setSilverPhaseId(0);
+                        }}
+                      >
+                        <ListItemIcon>
+                          <ArrowBack />
+                        </ListItemIcon>
+                        <ListItemText>
+                          Pools Phase ID: {poolsPhaseId}
+                        </ListItemText>
+                      </ListItemButton>
+                      {!silverPhaseId && (
+                        <>
+                          {sePhases.length > 0 && (
+                            <List disablePadding>
+                              {sePhases.map((phase) => (
+                                <ListItemButton
+                                  key={phase.id}
+                                  onClick={() => {
+                                    setSilverPhaseId(phase.id);
+                                  }}
+                                >
+                                  <ListItemText
+                                    style={{
+                                      overflowX: "hidden",
+                                      whiteSpace: "nowrap",
+                                    }}
+                                  >
+                                    {phase.name}{" "}
+                                    <Typography variant="caption">
+                                      ({phase.id})
+                                    </Typography>
+                                  </ListItemText>
+                                </ListItemButton>
+                              ))}
+                            </List>
+                          )}
+                        </>
+                      )}
+                      {silverPhaseId > 0 && (
+                        <>
+                          <ListItemButton
+                            style={{ paddingLeft: 0 }}
+                            onClick={() => {
+                              setSilverPhaseId(0);
+                            }}
+                          >
+                            <ListItemIcon>
+                              <ArrowBack />
+                            </ListItemIcon>
+                            <ListItemText>
+                              Silver Phase ID: {silverPhaseId}
+                            </ListItemText>
+                          </ListItemButton>
+                          <Stack
+                            direction="row"
+                            style={{ alignItems: "center", height: "48px" }}
+                          >
+                            <Button
+                              color="warning"
+                              variant="outlined"
+                              onClick={async () => {
+                                const poolIdToPoolSeedToOverallSeed =
+                                  await getPoolsSeeds();
+                                const silverSeeds = (
+                                  await getSilverSeeds(
+                                    poolIdToPoolSeedToOverallSeed
+                                  )
+                                ).sort((a, b) => a.overallSeed - b.overallSeed);
+                                const numPools =
+                                  poolIdToPoolSeedToOverallSeed.size;
+
+                                let rotate = 0;
+                                const proposedSilverSeeds: SilverSeed[] = [];
+                                while (silverSeeds.length > 0) {
+                                  let nextSeeds = silverSeeds.slice(
+                                    0,
+                                    numPools
+                                  );
+                                  if (rotate > 0) {
+                                    const end = nextSeeds.splice(-rotate);
+                                    nextSeeds = end.concat(nextSeeds);
+                                  }
+                                  proposedSilverSeeds.push(...nextSeeds);
+
+                                  silverSeeds.splice(0, numPools);
+                                  rotate += 2;
+                                  if (rotate >= numPools) {
+                                    rotate = rotate % numPools;
+                                  }
+                                }
+
+                                console.log("proposed seeding:");
+                                for (
+                                  let i = 0;
+                                  i < proposedSilverSeeds.length;
+                                  i += numPools
+                                ) {
+                                  console.log(
+                                    JSON.stringify(
+                                      proposedSilverSeeds
+                                        .slice(i, i + numPools)
+                                        .map(
+                                          (silverSeed) => silverSeed.overallSeed
+                                        )
+                                    )
+                                  );
+                                }
+                                console.log("\n");
+                                checkForRematches(
+                                  proposedSilverSeeds,
+                                  numPools,
+                                  4
+                                );
+                              }}
+                            >
+                              Check (See console)
+                            </Button>
+                          </Stack>
+                        </>
+                      )}
+                    </>
+                  )}
+                </>
+              )}
             </>
           )}
         </>
