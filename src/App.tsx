@@ -12,9 +12,11 @@ import {
   CircularProgress,
   Link,
   List,
+  ListItem,
   ListItemButton,
   ListItemIcon,
   ListItemText,
+  ListSubheader,
   Stack,
   TextField,
   Typography,
@@ -99,9 +101,14 @@ type Phase = {
     | null;
 };
 
+type OverallSeed = {
+  name: string;
+  num: number;
+};
+
 type SilverSeed = {
   id: number;
-  overallSeed: number;
+  overallSeed: OverallSeed;
 };
 
 async function fetchGql(
@@ -179,6 +186,9 @@ const POOLS_SEEDS_QUERY = `
         nodes {
           seedNum
           groupSeedNum
+          entrant {
+            name
+          }
           phaseGroup {
             id
           }
@@ -275,12 +285,12 @@ function checkForRematches(
   const seeds: number[][] = [];
   for (let i = 0; i < part * 2; i++) {
     const silverSeed = silverSeeds[i];
-    seeds.push(silverSeed ? [silverSeed.overallSeed] : []);
+    seeds.push(silverSeed ? [silverSeed.overallSeed.num] : []);
   }
 
   // derive pools
   const maxRealOverallSeed = Math.max(
-    ...silverSeeds.map((silverSeed) => silverSeed.overallSeed)
+    ...silverSeeds.map((silverSeed) => silverSeed.overallSeed.num)
   );
   const maxOverallSeed =
     maxRealOverallSeed % numPools === 0
@@ -426,7 +436,7 @@ function App() {
   const [silverPhaseId, setSilverPhaseId] = useState(0);
 
   const getPoolsSeeds = useCallback(async (): Promise<
-    Map<number, Map<number, number>>
+    Map<number, Map<number, OverallSeed>>
   > => {
     try {
       setGetting(true);
@@ -436,16 +446,19 @@ function App() {
       setError("");
       const poolIdToPoolSeedToOverallSeed = new Map<
         number,
-        Map<number, number>
+        Map<number, OverallSeed>
       >();
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (data.phase.seeds.nodes as any[]).forEach((node) => {
         let seeds = poolIdToPoolSeedToOverallSeed.get(node.phaseGroup.id);
         if (!seeds) {
-          seeds = new Map<number, number>();
+          seeds = new Map<number, OverallSeed>();
           poolIdToPoolSeedToOverallSeed.set(node.phaseGroup.id, seeds);
         }
-        seeds.set(node.groupSeedNum, node.seedNum);
+        seeds.set(node.groupSeedNum, {
+          name: node.entrant.name,
+          num: node.seedNum,
+        });
       });
       return poolIdToPoolSeedToOverallSeed;
     } finally {
@@ -455,7 +468,7 @@ function App() {
 
   const getSilverSeeds = useCallback(
     async (
-      poolIdToPoolSeedToOverallSeed: Map<number, Map<number, number>>
+      poolIdToPoolSeedToOverallSeed: Map<number, Map<number, OverallSeed>>
     ): Promise<SilverSeed[]> => {
       try {
         setGetting(true);
@@ -481,7 +494,7 @@ function App() {
     const poolIdToPoolSeedToOverallSeed = await getPoolsSeeds();
     const silverSeeds = (
       await getSilverSeeds(poolIdToPoolSeedToOverallSeed)
-    ).sort((a, b) => a.overallSeed - b.overallSeed);
+    ).sort((a, b) => a.overallSeed.num - b.overallSeed.num);
     const numPools = poolIdToPoolSeedToOverallSeed.size;
 
     let rotate = 0;
@@ -502,6 +515,9 @@ function App() {
     }
     return { proposedSilverSeeds, numPools };
   }, [getPoolsSeeds, getSilverSeeds]);
+  const [updatedSilverSeeds, setUpdatedSilverSeeds] = useState<SilverSeed[]>(
+    []
+  );
 
   return (
     <Stack style={{ alignItems: "start" }}>
@@ -606,6 +622,7 @@ function App() {
                   setEventId(0);
                   setPoolsPhaseId(0);
                   setSilverPhaseId(0);
+                  setUpdatedSilverSeeds([]);
                 }}
               >
                 <ListItemIcon>
@@ -650,6 +667,7 @@ function App() {
                       setEventId(0);
                       setPoolsPhaseId(0);
                       setSilverPhaseId(0);
+                      setUpdatedSilverSeeds([]);
                     }}
                   >
                     <ListItemIcon>
@@ -692,6 +710,7 @@ function App() {
                         onClick={() => {
                           setPoolsPhaseId(0);
                           setSilverPhaseId(0);
+                          setUpdatedSilverSeeds([]);
                         }}
                       >
                         <ListItemIcon>
@@ -735,6 +754,7 @@ function App() {
                             style={{ paddingLeft: 0 }}
                             onClick={() => {
                               setSilverPhaseId(0);
+                              setUpdatedSilverSeeds([]);
                             }}
                           >
                             <ListItemIcon>
@@ -759,6 +779,7 @@ function App() {
                                   const { proposedSilverSeeds, numPools } =
                                     await getProposedSeeding();
                                   setError("");
+                                  setUpdatedSilverSeeds(proposedSilverSeeds);
                                   console.log("proposed seeding:");
                                   for (
                                     let i = 0;
@@ -814,6 +835,7 @@ function App() {
                                     { phaseId: silverPhaseId, seedMapping }
                                   );
                                   setError("");
+                                  setUpdatedSilverSeeds(proposedSilverSeeds);
                                 } catch (e: unknown) {
                                   if (e instanceof Error) {
                                     setError(e.message);
@@ -826,6 +848,18 @@ function App() {
                               Fix!
                             </Button>
                           </Stack>
+                          {updatedSilverSeeds.length > 0 && (
+                            <List disablePadding dense>
+                              <ListSubheader>Projected</ListSubheader>
+                              {updatedSilverSeeds.map((silverSeed, i) => (
+                                <ListItem key={silverSeed.id}>
+                                  <ListItemText>
+                                    {i + 1} {silverSeed.overallSeed.name}
+                                  </ListItemText>
+                                </ListItem>
+                              ))}
+                            </List>
+                          )}
                         </>
                       )}
                     </>
