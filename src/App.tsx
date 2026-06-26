@@ -5,7 +5,6 @@ import {
   useState,
   type FormEvent,
 } from "react";
-import "./App.css";
 import {
   Alert,
   Button,
