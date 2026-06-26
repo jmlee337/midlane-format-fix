@@ -171,8 +171,8 @@ const GET_EVENT_QUERY = `
 `;
 
 const GET_POOLS_SEEDS_QUERY = `
-  query poolsSeeds {
-    phase(id: 2316237) {
+  query poolsSeeds($id: ID) {
+    phase(id: $id) {
       seeds(query: { page: 1, perPage: 512 }) {
         nodes {
           seedNum
@@ -187,8 +187,8 @@ const GET_POOLS_SEEDS_QUERY = `
 `;
 
 const GET_SILVER_SEEDS_QUERY = `
-  query silverSeeds {
-    phase(id: 2316239) {
+  query silverSeeds($id: ID) {
+    phase(id: $id) {
       seeds(query: { page: 1, perPage: 512 }) {
         nodes {
           id
@@ -204,6 +204,120 @@ const GET_SILVER_SEEDS_QUERY = `
   }
 `;
 
+function checkForRematch(
+  seedsA: number[],
+  seedsB: number[],
+  roundOf: number,
+  overallSeedToPool: Map<number, Set<number>>,
+  depth: number
+) {
+  let anyRematchFound = false;
+  let aLowerThanB = false;
+  let bLowerThanA = false;
+  const jLength = Math.min(seedsA.length, depth);
+  for (let j = 0; j < jLength; j++) {
+    const aPool = overallSeedToPool.get(seedsA[j]);
+    if (aPool) {
+      const kLength = Math.min(seedsB.length, depth);
+      for (let k = 0; k < kLength; k++) {
+        if (aPool.has(seedsB[k])) {
+          if (!anyRematchFound) {
+            console.log(
+              `${JSON.stringify(seedsA)} vs ${JSON.stringify(seedsB)}`
+            );
+            anyRematchFound = true;
+          }
+          console.log(
+            `rematch found in RO${roundOf}: ${seedsA[j]} vs ${
+              seedsB[k]
+            } (depth: ${j + 1}, ${k + 1})`
+          );
+          if (j === k) {
+            return anyRematchFound;
+          }
+          if (j < k) {
+            aLowerThanB = true;
+          } else {
+            bLowerThanA = true;
+          }
+          if (aLowerThanB && bLowerThanA) {
+            return anyRematchFound;
+          }
+        }
+      }
+    }
+  }
+  return anyRematchFound;
+}
+
+function checkForRematches(
+  silverSeeds: SilverSeed[],
+  numPools: number,
+  depth: number
+) {
+  // set up SE
+  const log2 = Math.log2(silverSeeds.length);
+  let part = Math.pow(2, log2 % 1 === 0 ? log2 - 1 : Math.trunc(log2));
+  const seeds: number[][] = [];
+  for (let i = 0; i < part * 2; i++) {
+    const silverSeed = silverSeeds[i];
+    seeds.push(silverSeed ? [silverSeed.overallSeed] : []);
+  }
+
+  // derive pools
+  const maxRealOverallSeed = Math.max(
+    ...silverSeeds.map((silverSeed) => silverSeed.overallSeed)
+  );
+  const maxOverallSeed =
+    maxRealOverallSeed % numPools === 0
+      ? maxRealOverallSeed
+      : (Math.trunc(maxRealOverallSeed / numPools) + 1) * numPools;
+  const allOverallSeeds = Array.from(
+    { length: maxOverallSeed },
+    (_, i) => i + 1
+  );
+  const overallSeedToPool = new Map<number, Set<number>>();
+  const pools = Array.from({ length: numPools }, () => new Set<number>());
+  let reverse = false;
+  while (allOverallSeeds.length > 0) {
+    const theseSeeds = allOverallSeeds.slice(0, numPools);
+    if (reverse) {
+      theseSeeds.reverse();
+    }
+    for (let i = 0; i < numPools; i++) {
+      const overallSeed = theseSeeds[i];
+      pools[i].add(overallSeed);
+      overallSeedToPool.set(overallSeed, pools[i]);
+    }
+
+    allOverallSeeds.splice(0, numPools);
+    reverse = !reverse;
+  }
+
+  let anyRematchFound = false;
+  while (part >= 1) {
+    const sideA = seeds.slice(0, part);
+    const sideB = seeds.slice(part);
+    sideB.reverse();
+    for (let i = 0; i < part; i++) {
+      if (
+        checkForRematch(sideA[i], sideB[i], part * 2, overallSeedToPool, depth)
+      ) {
+        anyRematchFound = true;
+      }
+    }
+
+    seeds.length = 0;
+    for (let i = 0; i < part; i++) {
+      seeds.push(sideA[i].concat(sideB[i]).sort());
+    }
+    part /= 2;
+  }
+  if (!anyRematchFound) {
+    console.log(`no rematches found up to depth: ${depth}`);
+  }
+}
+
 function App() {
   const [error, setError] = useState("");
   const [sggApiKey, setSggApiKey] = useState("");
@@ -211,13 +325,15 @@ function App() {
   useEffect(() => {
     (async () => {
       try {
-        const data = await fetchGql(
-          sggApiKey,
-          GET_ADMINED_TOURNAMENTS_QUERY,
-          {}
-        );
-        setError("");
-        setTournaments(data.currentUser.tournaments.nodes ?? []);
+        if (sggApiKey) {
+          const data = await fetchGql(
+            sggApiKey,
+            GET_ADMINED_TOURNAMENTS_QUERY,
+            {}
+          );
+          setError("");
+          setTournaments(data.currentUser.tournaments.nodes ?? []);
+        }
       } catch (e: unknown) {
         setTournaments([]);
         if (e instanceof Error) {
@@ -522,10 +638,44 @@ function App() {
                 variant="contained"
                 onClick={async () => {
                   const poolIdToPoolSeedToOverallSeed = await getPoolsSeeds();
-                  const silverSeeds = await getSilverSeeds(
-                    poolIdToPoolSeedToOverallSeed
-                  );
-                  console.log(silverSeeds);
+                  const silverSeeds = (
+                    await getSilverSeeds(poolIdToPoolSeedToOverallSeed)
+                  ).sort((a, b) => a.overallSeed - b.overallSeed);
+                  const numPools = poolIdToPoolSeedToOverallSeed.size;
+
+                  let rotate = 0;
+                  const proposedSilverSeeds: SilverSeed[] = [];
+                  while (silverSeeds.length > 0) {
+                    let nextSeeds = silverSeeds.slice(0, numPools);
+                    if (rotate > 0) {
+                      const end = nextSeeds.splice(-rotate);
+                      nextSeeds = end.concat(nextSeeds);
+                    }
+                    proposedSilverSeeds.push(...nextSeeds);
+
+                    silverSeeds.splice(0, numPools);
+                    rotate += 2;
+                    if (rotate >= numPools) {
+                      rotate = rotate % numPools;
+                    }
+                  }
+
+                  console.log("proposed seeding:");
+                  for (
+                    let i = 0;
+                    i < proposedSilverSeeds.length;
+                    i += numPools
+                  ) {
+                    console.log(
+                      JSON.stringify(
+                        proposedSilverSeeds
+                          .slice(i, i + numPools)
+                          .map((silverSeed) => silverSeed.overallSeed)
+                      )
+                    );
+                  }
+                  console.log("\n");
+                  checkForRematches(proposedSilverSeeds, numPools, 4);
                 }}
               >
                 Go!
