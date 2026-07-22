@@ -22,6 +22,9 @@ import {
 } from "@mui/material";
 import { ArrowBack } from "@mui/icons-material";
 
+const ROTATE_BULK = 2;
+const TARGET_REMATCH_DEPTH = 4;
+
 class ApiError extends Error {
   public fetch: boolean;
 
@@ -339,6 +342,7 @@ function checkForRematches(
   if (!anyRematchFound) {
     console.log(`no rematches found up to depth: ${depth}`);
   }
+  return anyRematchFound;
 }
 
 function App() {
@@ -498,7 +502,7 @@ function App() {
 
     let rotate = 0;
     const proposedSilverSeeds: SilverSeed[] = [];
-    while (silverSeeds.length > 0) {
+    while (silverSeeds.length >= numPools) {
       let nextSeeds = silverSeeds.slice(0, numPools);
       if (rotate > 0) {
         const end = nextSeeds.splice(-rotate);
@@ -507,11 +511,51 @@ function App() {
       proposedSilverSeeds.push(...nextSeeds);
 
       silverSeeds.splice(0, numPools);
-      rotate += 2;
+      rotate += ROTATE_BULK;
       if (rotate >= numPools) {
         rotate = rotate % numPools;
       }
     }
+    if (silverSeeds.length > 0) {
+      let depthMax = -1;
+      let rotateMax = -1;
+      for (rotate = 0; rotate < numPools; rotate++) {
+        let lastSeeds = structuredClone(silverSeeds);
+        if (rotate > 0) {
+          const end = lastSeeds.splice(-rotate);
+          lastSeeds = end.concat(lastSeeds);
+        }
+        const proposed = structuredClone(proposedSilverSeeds).concat(lastSeeds);
+        if (!checkForRematches(proposed, numPools, TARGET_REMATCH_DEPTH)) {
+          depthMax = TARGET_REMATCH_DEPTH;
+          rotateMax = rotate;
+          break;
+        }
+        for (let depth = TARGET_REMATCH_DEPTH - 1; depth > 0; depth--) {
+          if (!checkForRematches(proposed, numPools, TARGET_REMATCH_DEPTH)) {
+            if (depth > depthMax) {
+              depthMax = depth;
+              rotateMax = rotate;
+            }
+            break;
+          }
+        }
+      }
+      if (depthMax <= 0) {
+        throw new Error("cannot find seeding without rematches");
+      }
+      if (rotateMax < 0) {
+        throw new Error("unreachable");
+      }
+      let lastSeeds = structuredClone(silverSeeds);
+      if (rotateMax > 0) {
+        const end = lastSeeds.splice(-rotateMax);
+        lastSeeds = end.concat(lastSeeds);
+      }
+      console.log(`remainder rotate total: ${rotateMax}`);
+      proposedSilverSeeds.push(...lastSeeds);
+    }
+    console.log(`bulk rotate step: ${ROTATE_BULK}`);
     return { proposedSilverSeeds, numPools };
   }, [getPoolsSeeds, getSilverSeeds]);
   const [updatedSilverSeeds, setUpdatedSilverSeeds] = useState<SilverSeed[]>(
