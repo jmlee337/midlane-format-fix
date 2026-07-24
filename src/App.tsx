@@ -22,7 +22,6 @@ import {
 } from "@mui/material";
 import { ArrowBack } from "@mui/icons-material";
 
-const ROTATE_BULK = 2;
 const TARGET_REMATCH_DEPTH = 4;
 
 class ApiError extends Error {
@@ -235,7 +234,8 @@ function checkForRematch(
   seedsB: number[],
   roundOf: number,
   overallSeedToPool: Map<number, Set<number>>,
-  depth: number
+  depth: number,
+  log: boolean
 ) {
   let anyRematchFound = false;
   let aLowerThanB = false;
@@ -248,16 +248,20 @@ function checkForRematch(
       for (let k = 0; k < kLength; k++) {
         if (aPool.has(seedsB[k])) {
           if (!anyRematchFound) {
-            console.log(
-              `${JSON.stringify(seedsA)} vs ${JSON.stringify(seedsB)}`
-            );
+            if (log) {
+              console.log(
+                `${JSON.stringify(seedsA)} vs ${JSON.stringify(seedsB)}`
+              );
+            }
             anyRematchFound = true;
           }
-          console.log(
-            `rematch found in RO${roundOf}: ${seedsA[j]} vs ${
-              seedsB[k]
-            } (depth: ${j + 1}, ${k + 1})`
-          );
+          if (log) {
+            console.log(
+              `rematch found in RO${roundOf}: ${seedsA[j]} vs ${
+                seedsB[k]
+              } (depth: ${j + 1}, ${k + 1})`
+            );
+          }
           if (j === k) {
             return anyRematchFound;
           }
@@ -279,7 +283,8 @@ function checkForRematch(
 function checkForRematches(
   silverSeeds: SilverSeed[],
   numPools: number,
-  depth: number
+  depth: number,
+  log: boolean
 ) {
   // set up SE
   const log2 = Math.log2(silverSeeds.length);
@@ -327,7 +332,14 @@ function checkForRematches(
     sideB.reverse();
     for (let i = 0; i < part; i++) {
       if (
-        checkForRematch(sideA[i], sideB[i], part * 2, overallSeedToPool, depth)
+        checkForRematch(
+          sideA[i],
+          sideB[i],
+          part * 2,
+          overallSeedToPool,
+          depth,
+          log
+        )
       ) {
         anyRematchFound = true;
       }
@@ -339,7 +351,7 @@ function checkForRematches(
     }
     part /= 2;
   }
-  if (!anyRematchFound) {
+  if (!anyRematchFound && log) {
     console.log(`no rematches found up to depth: ${depth}`);
   }
   return anyRematchFound;
@@ -493,70 +505,124 @@ function App() {
     [sggApiKey, silverPhaseId]
   );
 
-  const getProposedSeeding = useCallback(async () => {
+  const getFixedSeeding = useCallback(async () => {
     const poolIdToPoolSeedToOverallSeed = await getPoolsSeeds();
     const silverSeeds = (
       await getSilverSeeds(poolIdToPoolSeedToOverallSeed)
     ).sort((a, b) => a.overallSeed.num - b.overallSeed.num);
     const numPools = poolIdToPoolSeedToOverallSeed.size;
 
-    let rotate = 0;
-    const proposedSilverSeeds: SilverSeed[] = [];
-    while (silverSeeds.length >= numPools) {
-      let nextSeeds = silverSeeds.slice(0, numPools);
-      if (rotate > 0) {
-        const end = nextSeeds.splice(-rotate);
-        nextSeeds = end.concat(nextSeeds);
-      }
-      proposedSilverSeeds.push(...nextSeeds);
+    let bulkDepthMax = -1;
+    let bulkRotateStepMax = -1;
+    let proposedSeedsMax: SilverSeed[] = [];
+    let remainderSeedsMax: SilverSeed[] = [];
+    for (let rotateStep = 1; rotateStep < numPools; rotateStep++) {
+      const tempSilverSeeds = structuredClone(silverSeeds);
+      let rotate = 0;
+      const proposedSeeds: SilverSeed[] = [];
+      while (tempSilverSeeds.length >= numPools) {
+        let nextSeeds = tempSilverSeeds.slice(0, numPools);
+        if (rotate > 0) {
+          const end = nextSeeds.splice(-rotate);
+          nextSeeds = end.concat(nextSeeds);
+        }
+        proposedSeeds.push(...nextSeeds);
 
-      silverSeeds.splice(0, numPools);
-      rotate += ROTATE_BULK;
-      if (rotate >= numPools) {
-        rotate = rotate % numPools;
+        tempSilverSeeds.splice(0, numPools);
+        rotate += rotateStep;
+        if (rotate >= numPools) {
+          rotate = rotate % numPools;
+        }
+      }
+
+      if (
+        !checkForRematches(
+          proposedSeeds,
+          numPools,
+          TARGET_REMATCH_DEPTH,
+          /* log= */ false
+        )
+      ) {
+        console.log(`bulk rotate step ${rotateStep}: ${TARGET_REMATCH_DEPTH}`);
+        bulkDepthMax = TARGET_REMATCH_DEPTH;
+        bulkRotateStepMax = rotateStep;
+        proposedSeedsMax = proposedSeeds;
+        remainderSeedsMax = tempSilverSeeds;
+        break;
+      }
+
+      for (let depth = TARGET_REMATCH_DEPTH - 1; depth > 0; depth--) {
+        if (
+          !checkForRematches(proposedSeeds, numPools, depth, /* log= */ false)
+        ) {
+          console.log(`bulk rotate step ${rotateStep}: ${depth}`);
+          if (depth > bulkDepthMax) {
+            bulkDepthMax = depth;
+            bulkRotateStepMax = rotateStep;
+            proposedSeedsMax = proposedSeeds;
+            remainderSeedsMax = tempSilverSeeds;
+          }
+          break;
+        }
       }
     }
-    if (silverSeeds.length > 0) {
-      let depthMax = -1;
-      let rotateMax = -1;
-      for (rotate = 0; rotate < numPools; rotate++) {
-        let lastSeeds = structuredClone(silverSeeds);
+
+    if (bulkDepthMax <= 0) {
+      throw new Error("cannot find bulk rotate step without rematches");
+    }
+    if (bulkRotateStepMax < 0) {
+      throw new Error("unreachable");
+    }
+    console.log(`bulk rotate step final: ${bulkRotateStepMax}`);
+
+    // remainder
+    let proposedRemainderSeedsMax: SilverSeed[] = [];
+    if (remainderSeedsMax.length > 0) {
+      let remainderDepthMax = -1;
+      let remainderRotateMax = -1;
+      for (let rotate = 0; rotate < numPools; rotate++) {
+        let lastSeeds = structuredClone(remainderSeedsMax);
         if (rotate > 0) {
           const end = lastSeeds.splice(-rotate);
           lastSeeds = end.concat(lastSeeds);
         }
-        const proposed = structuredClone(proposedSilverSeeds).concat(lastSeeds);
-        if (!checkForRematches(proposed, numPools, TARGET_REMATCH_DEPTH)) {
-          depthMax = TARGET_REMATCH_DEPTH;
-          rotateMax = rotate;
+        const proposed = structuredClone(proposedSeedsMax).concat(lastSeeds);
+        if (
+          !checkForRematches(
+            proposed,
+            numPools,
+            TARGET_REMATCH_DEPTH,
+            /* log= */ false
+          )
+        ) {
+          console.log(`remainder rotate ${rotate}: ${TARGET_REMATCH_DEPTH}`);
+          remainderDepthMax = TARGET_REMATCH_DEPTH;
+          remainderRotateMax = rotate;
+          proposedRemainderSeedsMax = lastSeeds;
           break;
         }
         for (let depth = TARGET_REMATCH_DEPTH - 1; depth > 0; depth--) {
-          if (!checkForRematches(proposed, numPools, TARGET_REMATCH_DEPTH)) {
-            if (depth > depthMax) {
-              depthMax = depth;
-              rotateMax = rotate;
+          if (!checkForRematches(proposed, numPools, depth, /* log= */ false)) {
+            console.log(`remainder rotate ${rotate}: ${depth}`);
+            if (depth > remainderDepthMax) {
+              remainderDepthMax = depth;
+              remainderRotateMax = rotate;
+              proposedRemainderSeedsMax = lastSeeds;
             }
             break;
           }
         }
       }
-      if (depthMax <= 0) {
-        throw new Error("cannot find seeding without rematches");
+      if (remainderDepthMax <= 0) {
+        throw new Error("cannot find remainder rotate without rematches");
       }
-      if (rotateMax < 0) {
+      if (remainderRotateMax < 0) {
         throw new Error("unreachable");
       }
-      let lastSeeds = structuredClone(silverSeeds);
-      if (rotateMax > 0) {
-        const end = lastSeeds.splice(-rotateMax);
-        lastSeeds = end.concat(lastSeeds);
-      }
-      console.log(`remainder rotate total: ${rotateMax}`);
-      proposedSilverSeeds.push(...lastSeeds);
+      console.log(`remainder rotate final: ${remainderRotateMax}`);
+      proposedSeedsMax.push(...proposedRemainderSeedsMax);
     }
-    console.log(`bulk rotate step: ${ROTATE_BULK}`);
-    return { proposedSilverSeeds, numPools };
+    return { fixedSeeds: proposedSeedsMax, numPools };
   }, [getPoolsSeeds, getSilverSeeds]);
   const [updatedSilverSeeds, setUpdatedSilverSeeds] = useState<SilverSeed[]>(
     []
@@ -819,19 +885,19 @@ function App() {
                               onClick={async () => {
                                 try {
                                   setGetting(true);
-                                  const { proposedSilverSeeds, numPools } =
-                                    await getProposedSeeding();
+                                  const { fixedSeeds, numPools } =
+                                    await getFixedSeeding();
                                   setError("");
-                                  setUpdatedSilverSeeds(proposedSilverSeeds);
+                                  setUpdatedSilverSeeds(fixedSeeds);
                                   console.log("proposed seeding:");
                                   for (
                                     let i = 0;
-                                    i < proposedSilverSeeds.length;
+                                    i < fixedSeeds.length;
                                     i += numPools
                                   ) {
                                     console.log(
                                       JSON.stringify(
-                                        proposedSilverSeeds
+                                        fixedSeeds
                                           .slice(i, i + numPools)
                                           .map(
                                             (silverSeed) =>
@@ -840,11 +906,11 @@ function App() {
                                       )
                                     );
                                   }
-                                  console.log("\n");
                                   checkForRematches(
-                                    proposedSilverSeeds,
+                                    fixedSeeds,
                                     numPools,
-                                    4
+                                    4,
+                                    /* log= */ true
                                   );
                                 } catch (e: unknown) {
                                   if (e instanceof Error) {
@@ -863,10 +929,10 @@ function App() {
                               onClick={async () => {
                                 try {
                                   setGetting(true);
-                                  const { proposedSilverSeeds } =
-                                    await getProposedSeeding();
+                                  const { fixedSeeds } =
+                                    await getFixedSeeding();
                                   setError("");
-                                  const seedMapping = proposedSilverSeeds.map(
+                                  const seedMapping = fixedSeeds.map(
                                     (silverSeed, i) => ({
                                       seedId: silverSeed.id,
                                       seedNum: i + 1,
@@ -878,7 +944,7 @@ function App() {
                                     { phaseId: silverPhaseId, seedMapping }
                                   );
                                   setError("");
-                                  setUpdatedSilverSeeds(proposedSilverSeeds);
+                                  setUpdatedSilverSeeds(fixedSeeds);
                                 } catch (e: unknown) {
                                   if (e instanceof Error) {
                                     setError(e.message);
